@@ -2818,3 +2818,61 @@ func ExampleFpdf_RoundedRect_rotated() {
 	// Output:
 	// Successfully generated pdf/Fpdf_RoundedRect_rotated.pdf
 }
+
+// ExampleFpdf_SetXmpMetadata demonstrates custom XMP metadata for documents.
+func ExampleFpdf_SetXmpMetadata() {
+	const xmpData = `<?xpacket begin="" id=""?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 5.6">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+
+    <!-- Standard PDF Metadata -->
+    <rdf:Description rdf:about=""
+      xmlns:dc="http://purl.org/dc/elements/1.1/"
+      xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+      xmlns:pdf="http://ns.adobe.com/pdf/1.3/"
+      xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/">
+
+      <!-- Document Title -->
+      <dc:title>
+        <rdf:Alt>
+          <rdf:li xml:lang="x-default">XMP metadata example</rdf:li>
+        </rdf:Alt>
+      </dc:title>
+
+      <!-- Author(s) -->
+      <dc:creator>
+        <rdf:Seq>
+          <rdf:li>Kurt Jung</rdf:li>
+					<rdf:li>The go-pdf Authors</rdf:li>
+        </rdf:Seq>
+      </dc:creator>
+
+      <!-- Subject/Description -->
+      <dc:description>
+        <rdf:Alt>
+          <rdf:li xml:lang="x-default">Example PDF that embeds custom XMP metadata</rdf:li>
+        </rdf:Alt>
+      </dc:description>
+
+      <!-- PDF Version -->
+      <pdf:PDFVersion>1.3</pdf:PDFVersion>
+
+    </rdf:Description>
+
+  </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="r"?>`
+
+	pdf := fpdf.New("P", "mm", "A4", "")
+	pdf.AddPage()
+	pdf.SetFont("Arial", "", 12)
+	pdf.Write(10, "Embed custom XMP metadata.")
+
+	pdf.SetXmpMetadata([]byte(xmpData))
+
+	fileStr := example.Filename("Fpdf_SetXmpMetadata")
+	err := pdf.OutputFileAndClose(fileStr)
+	example.SummaryCompare(err, fileStr)
+	// Output:
+	// Successfully generated pdf/Fpdf_SetXmpMetadata.pdf
+}

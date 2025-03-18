@@ -5083,6 +5083,10 @@ func (f *Fpdf) putcatalog() {
 	}
 	// Layers
 	f.layerPutCatalog()
+	// XMP metadata
+	if len(f.xmp) != 0 {
+		f.outf("/Metadata %d 0 R", f.nXMP)
+	}
 	// Name dictionary :
 	//	-> Javascript
 	//	-> Embedded files
@@ -5115,6 +5119,7 @@ func (f *Fpdf) putxmp() {
 		return
 	}
 	f.newobj()
+	f.nXMP = f.n
 	f.outf("<< /Type /Metadata /Subtype /XML /Length %d >>", len(f.xmp))
 	f.putstream(f.xmp)
 	f.out("endobj")
