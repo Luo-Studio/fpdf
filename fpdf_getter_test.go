@@ -352,10 +352,23 @@ func TestGetFontStyle(t *testing.T) {
 func TestGetJavascript(t *testing.T) {
 	const want = `<script>console.log('fpdf is awesome')</script>`
 	pdf := fpdf.New("P", "mm", "A4", "")
+
+	if got, want := pdf.GetJavascript(), ""; got != want {
+		t.Errorf("invalid javascript: got=%v, want=%v", got, want)
+	}
+
+	{
+		want := ""
+		pdf.SetJavascript(want)
+		if got := pdf.GetJavascript(); got != want {
+			t.Errorf("invalid javascript: got=%v, want=%v", got, want)
+		}
+	}
+
 	pdf.SetJavascript(want)
 
 	got := pdf.GetJavascript()
-	if got == nil || *got != want {
+	if got != want {
 		t.Errorf("invalid javascript: got=%v, want=%v", got, want)
 	}
 }

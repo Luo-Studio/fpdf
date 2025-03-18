@@ -441,7 +441,7 @@ type Pdf interface {
 	GetFontSize() (ptSize, unitSize float64)
 	GetFontStyle() string
 	GetImageInfo(imageStr string) (info *ImageInfoType)
-	GetJavascript() *string
+	GetJavascript() string
 	GetKeywords() string
 	GetLang() string
 	GetLineCapStyle() string

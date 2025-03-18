@@ -4219,8 +4219,14 @@ func (f *Fpdf) SetModificationDate(tm time.Time) {
 }
 
 // GetJavascript returns the Adobe JavaScript for the document.
-func (f *Fpdf) GetJavascript() *string {
-	return f.javascript
+//
+// GetJavascript returns an empty string if no javascript was
+// previously defined.
+func (f *Fpdf) GetJavascript() string {
+	if f.javascript == nil {
+		return ""
+	}
+	return *f.javascript
 }
 
 // SetJavascript adds Adobe JavaScript to the document.
