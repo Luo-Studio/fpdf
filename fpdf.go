@@ -693,7 +693,7 @@ func (f *Fpdf) SetCreator(creatorStr string, isUTF8 bool) {
 
 // GetXmpMetadata returns the XMP metadata that will be embedded with the document.
 func (f *Fpdf) GetXmpMetadata() []byte {
-	return f.xmp
+	return []byte(string(f.xmp))
 }
 
 // SetXmpMetadata defines XMP metadata that will be embedded with the document.
