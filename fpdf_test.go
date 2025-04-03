@@ -293,6 +293,20 @@ func TestSplitTextHandleCharacterNotInFontRange(t *testing.T) {
 
 }
 
+func TestAFMFontParser(t *testing.T) {
+	const embed = true
+	err := fpdf.MakeFont(
+		example.FontFile("cmmi10.pfb"),
+		example.FontFile("cp1252.map"),
+		example.FontDir(),
+		nil, embed,
+	)
+	if err != nil {
+		t.Fatalf("could not create cmmi10 font: %v", err)
+	}
+
+}
+
 func BenchmarkLineTo(b *testing.B) {
 	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.AddPage()
