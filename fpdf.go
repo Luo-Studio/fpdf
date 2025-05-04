@@ -701,6 +701,14 @@ func (f *Fpdf) SetXmpMetadata(xmpStream []byte) {
 	f.xmp = xmpStream
 }
 
+// AddOutputIntent adds an output intent with ICC color profile
+func (f *Fpdf) AddOutputIntent(outputIntent OutputIntentType) {
+	f.outputIntents = append(f.outputIntents, outputIntent)
+	if f.pdfVersion < pdfVers1_4 {
+		f.pdfVersion = pdfVers1_4
+	}
+}
+
 // AliasNbPages defines an alias for the total number of pages. It will be
 // substituted as the document is closed. An empty string is replaced with the
 // string "{nb}".
@@ -5048,6 +5056,7 @@ func (f *Fpdf) putinfo() {
 func (f *Fpdf) putcatalog() {
 	f.out("/Type /Catalog")
 	f.out("/Pages 1 0 R")
+	f.putOutputIntents()
 	if f.lang != "" {
 		f.outf("/Lang (%s)", f.lang)
 	}
@@ -5179,6 +5188,43 @@ func (f *Fpdf) putbookmarks() {
 	}
 }
 
+func (f *Fpdf) putOutputIntents() {
+	if len(f.outputIntents) <= 0 {
+		return
+	}
+
+	f.out("/OutputIntents [")
+	for index, oi := range f.outputIntents {
+		infoSegment := ""
+		if oi.Info != "" {
+			infoSegment = fmt.Sprintf("/Info (%s) ", oi.Info)
+		}
+		f.outf(
+			`<< /Type /OutputIntent /S /%s /OutputConditionIdentifier (%s) %s/DestOutputProfile %d 0 R >>`,
+			oi.SubtypeIdent, oi.OutputConditionIdentifier, infoSegment, f.outputIntentStartN+index,
+		)
+	}
+	f.out("]")
+}
+
+func (f *Fpdf) putOutputIntentStreams() {
+	if len(f.outputIntents) <= 0 {
+		return
+	}
+
+	f.outputIntentStartN = f.n + 1
+	for _, oi := range f.outputIntents {
+		f.newobj()
+		mem := xmem.compress(oi.ICCProfile)
+		compressedICC := mem.bytes()
+		f.outf("<< /N 3 /Alternate /DeviceRGB /Length %d /Filter /FlateDecode >>", len(compressedICC))
+		f.putstream(compressedICC)
+		f.out("endobj")
+
+		mem.release()
+	}
+}
+
 func (f *Fpdf) enddoc() {
 	if f.err != nil {
 		return
@@ -5203,6 +5249,8 @@ func (f *Fpdf) enddoc() {
 	f.putinfo()
 	f.out(">>")
 	f.out("endobj")
+	// Output intent color profile streams
+	f.putOutputIntentStreams()
 	// 	Catalog
 	f.newobj()
 	f.out("<<")

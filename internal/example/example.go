@@ -80,6 +80,12 @@ func PdfDir() string {
 	return filepath.Join(gofpdfDir, "pdf")
 }
 
+// ICCFile returns a qualified filename in which the path to the ICC file
+// directory is prepended to the specified filename.
+func ICCFile(fileStr string) string {
+	return filepath.Join(gofpdfDir, "icc", fileStr)
+}
+
 // PdfFile returns a qualified filename in which the path to the PDF output
 // directory is prepended to the specified filename.
 func PdfFile(fileStr string) string {

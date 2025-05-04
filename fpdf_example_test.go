@@ -2876,3 +2876,26 @@ func ExampleFpdf_SetXmpMetadata() {
 	// Output:
 	// Successfully generated pdf/Fpdf_SetXmpMetadata.pdf
 }
+
+// ExampleFpdf_AddOutputIntent demonstrates adding an output intent.
+func ExampleFpdf_AddOutputIntent() {
+	iccBytes, err := os.ReadFile(example.ICCFile("sRGB2014.icc"))
+	if err != nil {
+		panic(err)
+	}
+
+	pdf := fpdf.New(fpdf.OrientationPortrait, "mm", "A4", "")
+	pdf.AddPage()
+	pdf.SetFont("Arial", "B", 16)
+	pdf.Cell(40, 10, "Hello World!")
+	pdf.AddOutputIntent(fpdf.OutputIntentType{
+		SubtypeIdent:              fpdf.OutputIntent_GTS_PDFA1,
+		OutputConditionIdentifier: "sRGB RGB",
+		ICCProfile:                iccBytes,
+	})
+	fileStr := example.Filename("Fpdf_AddOutputIntent")
+	err = pdf.OutputFileAndClose(fileStr)
+	example.SummaryCompare(err, fileStr)
+	// Output:
+	// Successfully generated pdf/Fpdf_AddOutputIntent.pdf
+}

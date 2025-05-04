@@ -377,6 +377,23 @@ type FontLoader interface {
 	Open(name string) (io.Reader, error)
 }
 
+// OutputIntentSubtype any of the pre defined types below or a value defined by ISO 32000 extension.
+type OutputIntentSubtype string
+
+const (
+	OutputIntent_GTS_PDFX  OutputIntentSubtype = "GTS_PDFX"
+	OutputIntent_GTS_PDFA1 OutputIntentSubtype = "GTS_PDFA1"
+	OutputIntent_GTS_PDFE1 OutputIntentSubtype = "GTS_PDFE1"
+)
+
+// OutputIntentType defines an output intent with name and ICC color profile.
+type OutputIntentType struct {
+	SubtypeIdent              OutputIntentSubtype
+	OutputConditionIdentifier string
+	Info                      string
+	ICCProfile                []byte
+}
+
 // Pdf defines the interface used for various methods. It is implemented by the
 // main FPDF instance as well as templates.
 type Pdf interface {
@@ -693,6 +710,8 @@ type Fpdf struct {
 		draw, fill, text colorType
 	}
 	spotColorMap           map[string]spotColorType // Map of named ink-based colors
+	outputIntents          []OutputIntentType       // OutputIntents
+	outputIntentStartN     int                      // Start object number for
 	userUnderlineThickness float64                  // A custom user underline thickness multiplier.
 
 	fmt struct {
