@@ -2899,3 +2899,35 @@ func ExampleFpdf_AddOutputIntent() {
 	// Output:
 	// Successfully generated pdf/Fpdf_AddOutputIntent.pdf
 }
+
+// ExampleFpdf_SVGBasicDraw_qrcode demonstrates adding a QR code from SVG.
+func ExampleFpdf_SVGBasicDraw_qrcode() {
+	// This QR code was generated using the following code:
+	/*
+		import svgqr "github.com/wamuir/svg-qr-code"
+		qrc, _ := svgqr.New("https://codeberg.org/go-pdf/fpdf")
+		svg := []byte(qrc.String())
+		os.WriteFile("qrcode.svg", svg, 0644)
+	*/
+	svgBytes, err := os.ReadFile(example.ImageFile("qrcode.svg"))
+	if err != nil {
+		panic(err)
+	}
+
+	pdf := fpdf.New("P", "mm", "A4", "")
+	pdf.AddPage()
+	pdf.SetFont("Arial", "B", 16)
+	pdf.Cell(40, 10, "Hello, world!")
+
+	pdfsvg, err := fpdf.SVGBasicParse(svgBytes)
+	if err != nil {
+		panic(err)
+	}
+	pdf.SVGBasicDraw(&pdfsvg, 20, "_")
+
+	fileStr := example.Filename("Fpdf_SVGBasicDraw_qrcode")
+	err = pdf.OutputFileAndClose(fileStr)
+	example.SummaryCompare(err, fileStr)
+	// Output:
+	// Successfully generated pdf/Fpdf_SVGBasicDraw_qrcode.pdf
+}
