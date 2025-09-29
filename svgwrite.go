@@ -133,12 +133,12 @@ func (f *Fpdf) SVGBasicDraw(sb *SVGBasicType, scale float64, styleStr string) {
 		styleStr := styleStr
 		if styleStr == "_" {
 			styleStr = ""
-			if path.Fill != "" {
+			if path.Fill != "" && path.Fill != "none" {
 				r, g, b := hexToRGB(path.Fill)
 				f.SetFillColor(r, g, b)
 				styleStr += "F"
 			}
-			if path.Stroke != "" {
+			if path.Stroke != "" && path.Stroke != "none" {
 				r, g, b := hexToRGB(path.Stroke)
 				f.SetDrawColor(r, g, b)
 				styleStr += "D"
