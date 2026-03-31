@@ -454,11 +454,12 @@ func (utf *utf8FontFile) parsePOSTTable(weight int) {
 	}
 }
 
-func (utf *utf8FontFile) parseCMAPTable(format int) int {
+func (utf *utf8FontFile) parseCMAPTable(format int) (int, int) {
 	cmapPosition := utf.SeekTable("cmap")
 	utf.skip(2)
 	cmapTableCount := utf.readUint16()
 	cidCMAPPosition := 0
+	format12Position := 0
 	for i := 0; i < cmapTableCount; i++ {
 		system := utf.readUint16()
 		coded := utf.readUint16()
@@ -466,20 +467,22 @@ func (utf *utf8FontFile) parseCMAPTable(format int) int {
 		oldReaderPosition := utf.fileReader.readerPosition
 		if (system == 3 && coded == 1) || system == 0 { // Microsoft, Unicode
 			v := utf.getUint16(cmapPosition + position)
-			if v == 4 {
-				if cidCMAPPosition == 0 {
-					cidCMAPPosition = cmapPosition + position
-				}
-				break
+			if v == 4 && cidCMAPPosition == 0 {
+				cidCMAPPosition = cmapPosition + position
+			}
+		}
+		if (system == 3 && coded == 10) || (system == 0 && coded >= 3) {
+			v := utf.getUint16(cmapPosition + position)
+			if v == 12 {
+				format12Position = cmapPosition + position
 			}
 		}
 		utf.seek(int(oldReaderPosition))
 	}
-	if cidCMAPPosition == 0 {
+	if cidCMAPPosition == 0 && format12Position == 0 {
 		fmt.Printf("Font does not have cmap for Unicode\n")
-		return cidCMAPPosition
 	}
-	return cidCMAPPosition
+	return cidCMAPPosition, format12Position
 }
 
 func (utf *utf8FontFile) parseTables() {
@@ -488,7 +491,7 @@ func (utf *utf8FontFile) parseTables() {
 	n := utf.parseHHEATable()
 	w := utf.parseOS2Table()
 	utf.parsePOSTTable(w)
-	runeCMAPPosition := utf.parseCMAPTable(f)
+	runeCMAPPosition, format12Position := utf.parseCMAPTable(f)
 
 	utf.SeekTable("maxp")
 	utf.skip(4)
@@ -496,7 +499,14 @@ func (utf *utf8FontFile) parseTables() {
 
 	symbolCharDictionary := make(map[int][]int)
 	charSymbolDictionary := make(map[int]int)
-	utf.generateSCCSDictionaries(runeCMAPPosition, symbolCharDictionary, charSymbolDictionary)
+	if runeCMAPPosition != 0 {
+		utf.generateSCCSDictionaries(runeCMAPPosition, symbolCharDictionary, charSymbolDictionary)
+	}
+	if format12Position != 0 {
+		utf.generateFormat12Dictionaries(format12Position, symbolCharDictionary, charSymbolDictionary)
+	}
+
+	utf.charSymbolDictionary = charSymbolDictionary
 
 	scale := 1000.0 / float64(utf.fontElementSize)
 	utf.parseHMTXTable(n, numSymbols, symbolCharDictionary, scale)
@@ -680,6 +690,13 @@ func (utf *utf8FontFile) generateCMAPTable(cidSymbolPairCollection map[int]int, 
 		cmapstr = append(cmapstr, packUint16(cm)...)
 	}
 	return cmapstr
+}
+
+// IsBitmapOnly returns true if the font has no outline glyph data (glyf table),
+// indicating it is a bitmap-only font (e.g., color emoji with CBDT/CBLC).
+func (utf *utf8FontFile) IsBitmapOnly() bool {
+	_, hasGlyf := utf.tableDescriptions["glyf"]
+	return !hasGlyf
 }
 
 // GenerateCutFont fill utf8FontFile from .utf file, only with runes from usedRunes
