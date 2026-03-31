@@ -2681,6 +2681,13 @@ func (f *Fpdf) CellFormat(w, h float64, txtStr, borderStr string, ln int,
 		return
 	}
 
+	// If the current font has bitmap glyphs and the text contains emoji,
+	// render borders/fill normally but delegate text to cellWithBitmaps.
+	if len(txtStr) > 0 && f.isCurrentUTF8 && f.currentFont.bitmapGlyphs != nil && f.hasBitmapGlyphs(txtStr) {
+		f.cellFormatWithBitmaps(w, h, txtStr, borderStr, ln, alignStr, fill, link, linkStr)
+		return
+	}
+
 	borderStr = strings.ToUpper(borderStr)
 	k := f.k
 	if f.y+h > f.pageBreakTrigger && !f.inHeader && !f.inFooter && f.acceptPageBreak() {
@@ -2962,6 +2969,38 @@ func (f *Fpdf) putBitmapEmoji(bg *bitmapGlyph, emojiSize, cellHeight float64) {
 
 	// Advance x position
 	f.x += emojiSize
+}
+
+// cellFormatWithBitmaps handles CellFormat calls when the text contains bitmap
+// emoji. It renders borders and fill using CellFormat with empty text, then
+// renders the text content (with bitmap emoji) using cellWithBitmaps.
+func (f *Fpdf) cellFormatWithBitmaps(w, h float64, txtStr, borderStr string, ln int,
+	alignStr string, fill bool, link int, linkStr string) {
+	if w == 0 {
+		w = f.w - f.rMargin - f.x
+	}
+
+	startX := f.x
+
+	// Render cell background and borders with empty text
+	f.CellFormat(w, h, "", borderStr, 0, alignStr, fill, link, linkStr)
+
+	// Move back into the cell to render text with bitmap emoji
+	f.x = startX + f.cMargin
+	f.cellWithBitmaps(w-f.cMargin*2, h, txtStr)
+
+	// Position after the cell
+	endX := startX + w
+	switch ln {
+	case 0:
+		f.x = endX
+	case 1:
+		f.y += h
+		f.x = f.lMargin
+	case 2:
+		f.x = startX
+		f.y += h
+	}
 }
 
 // Cellf is a simpler printf-style version of CellFormat with no fill, border,
