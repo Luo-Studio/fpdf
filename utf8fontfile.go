@@ -35,9 +35,6 @@ const symbolContinue = 1 << 5
 const symbolAllScale = 1 << 6
 const symbol2x2 = 1 << 7
 
-// CID map Init — supports both BMP (2-byte) and supplementary plane (4-byte) codepoints
-const toUnicode = "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo\n<</Registry (Adobe)\n/Ordering (UCS)\n/Supplement 0\n>> def\n/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n2 begincodespacerange\n<0000> <FFFF>\n<00010000> <0010FFFF>\nendcodespacerange\n1 beginbfrange\n<0000> <FFFF> <0000>\nendbfrange\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend"
-
 type utf8FontFile struct {
 	fileReader           *fileReader
 	LastRune             int
