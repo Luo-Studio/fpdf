@@ -2055,18 +2055,18 @@ func (f *Fpdf) addFont(familyStr, styleStr, fileStr string, isUTF8 bool) {
 			sbarr = makeSubsetRange(32)
 		}
 		def := fontDefType{
-			Tp:        Type,
-			Name:      fontKey,
-			Desc:      desc,
-			Up:        int(round(utf8File.UnderlinePosition)),
-			Ut:        round(utf8File.UnderlineThickness),
-			Cw:        utf8File.CharWidths,
-			usedRunes: sbarr,
-			File:      fileStr,
-			utf8File:  utf8File,
-			runeToCID: make(map[int]int),
-			cidToRune: make(map[int]int),
-
+			Tp:           Type,
+			Name:         fontKey,
+			Desc:         desc,
+			Up:           int(round(utf8File.UnderlinePosition)),
+			Ut:           round(utf8File.UnderlineThickness),
+			Cw:           utf8File.CharWidths,
+			usedRunes:    sbarr,
+			File:         fileStr,
+			utf8File:     utf8File,
+			runeToCID:    make(map[int]int),
+			cidToRune:    make(map[int]int),
+			bitmapGlyphs: utf8File.parseCBLCTable(),
 		}
 		def.i, _ = generateFontID(def)
 		f.fonts[fontKey] = def
@@ -2195,17 +2195,17 @@ func (f *Fpdf) addFontFromBytes(familyStr, styleStr string, jsonFileBytes, zFile
 			sbarr = makeSubsetRange(32)
 		}
 		def := fontDefType{
-			Tp:        Type,
-			Name:      fontkey,
-			Desc:      desc,
-			Up:        int(round(utf8File.UnderlinePosition)),
-			Ut:        round(utf8File.UnderlineThickness),
-			Cw:        utf8File.CharWidths,
-			utf8File:  utf8File,
-			usedRunes: sbarr,
-			runeToCID: make(map[int]int),
-			cidToRune: make(map[int]int),
-
+			Tp:           Type,
+			Name:         fontkey,
+			Desc:         desc,
+			Up:           int(round(utf8File.UnderlinePosition)),
+			Ut:           round(utf8File.UnderlineThickness),
+			Cw:           utf8File.CharWidths,
+			utf8File:     utf8File,
+			usedRunes:    sbarr,
+			runeToCID:    make(map[int]int),
+			cidToRune:    make(map[int]int),
+			bitmapGlyphs: utf8File.parseCBLCTable(),
 		}
 		def.i, _ = generateFontID(def)
 		f.fonts[fontkey] = def
@@ -2869,7 +2869,99 @@ func reverseText(text string) string {
 // Cell is a simpler version of CellFormat with no fill, border, links or
 // special alignment. The Cell_strikeout() example demonstrates this method.
 func (f *Fpdf) Cell(w, h float64, txtStr string) {
+	if f.isCurrentUTF8 && f.currentFont.bitmapGlyphs != nil && f.hasBitmapGlyphs(txtStr) {
+		f.cellWithBitmaps(w, h, txtStr)
+		return
+	}
 	f.CellFormat(w, h, txtStr, "", 0, "L", false, 0, "")
+}
+
+// hasBitmapGlyphs returns true if any rune in the string has a color bitmap glyph.
+func (f *Fpdf) hasBitmapGlyphs(s string) bool {
+	for _, r := range s {
+		if f.currentFont.getBitmapGlyph(int(r)) != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// cellWithBitmaps renders text that contains color bitmap emoji. It splits the
+// string into segments of regular text (rendered via CellFormat) and bitmap
+// characters (rendered as inline PNG images).
+func (f *Fpdf) cellWithBitmaps(w, h float64, txtStr string) {
+	if f.err != nil {
+		return
+	}
+
+	fontSize := f.fontSize
+	emojiSize := fontSize
+	isBitmapOnly := f.currentFont.utf8File != nil && f.currentFont.utf8File.IsBitmapOnly()
+
+	var textBuf []rune
+	for _, r := range txtStr {
+		bg := f.currentFont.getBitmapGlyph(int(r))
+		if bg == nil {
+			if isBitmapOnly {
+				// For bitmap-only fonts, non-bitmap chars (like spaces) can't be
+				// rendered as outline text. Flush any text buffer and advance x
+				// by the character width from font metrics.
+				if len(textBuf) > 0 {
+					f.CellFormat(f.GetStringWidth(string(textBuf)), h, string(textBuf), "", 0, "L", false, 0, "")
+					textBuf = textBuf[:0]
+				}
+				charWidth := float64(f.currentFont.Cw[int(r)]) * f.fontSize / 1000
+				if charWidth == 0 {
+					charWidth = f.fontSize * 0.3 // reasonable space width
+				}
+				f.x += charWidth
+			} else {
+				textBuf = append(textBuf, r)
+			}
+			continue
+		}
+
+		// Flush accumulated text
+		if len(textBuf) > 0 {
+			f.CellFormat(f.GetStringWidth(string(textBuf)), h, string(textBuf), "", 0, "L", false, 0, "")
+			textBuf = textBuf[:0]
+		}
+
+		// Render bitmap glyph as inline PNG image
+		f.putBitmapEmoji(bg, emojiSize, h)
+	}
+
+	// Flush remaining text
+	if len(textBuf) > 0 {
+		f.CellFormat(f.GetStringWidth(string(textBuf)), h, string(textBuf), "", 0, "L", false, 0, "")
+	}
+}
+
+// putBitmapEmoji renders a single color bitmap emoji at the current position
+// as an inline PNG image.
+func (f *Fpdf) putBitmapEmoji(bg *bitmapGlyph, emojiSize, cellHeight float64) {
+	if f.err != nil {
+		return
+	}
+
+	// Register the PNG image from the glyph's bitmap data
+	imgName := fmt.Sprintf("_emoji_%p", bg)
+	if _, exists := f.images[imgName]; !exists {
+		reader := bytes.NewReader(bg.PNGData)
+		info := f.RegisterImageOptionsReader(imgName, ImageOptions{ImageType: "png"}, reader)
+		if f.err != nil || info == nil {
+			return
+		}
+	}
+
+	// Position: current x, vertically centered in the cell
+	x := f.x
+	y := f.y + (cellHeight-emojiSize)/2
+
+	f.ImageOptions(imgName, x, y, emojiSize, emojiSize, false, ImageOptions{ImageType: "png"}, 0, "")
+
+	// Advance x position
+	f.x += emojiSize
 }
 
 // Cellf is a simpler printf-style version of CellFormat with no fill, border,
@@ -4510,6 +4602,16 @@ func (f *Fpdf) putfonts() {
 				f.out(s.String())
 				f.out("endobj")
 			case "UTF8":
+				// Bitmap-only fonts (e.g., color emoji with CBDT/CBLC) have no
+				// outline data. Their glyphs are rendered as inline images, so
+				// we emit a minimal font object to keep PDF structure valid.
+				if font.utf8File.IsBitmapOnly() {
+					f.newobj()
+					f.out("<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>")
+					f.out("endobj")
+					continue
+				}
+
 				fontName := "utf8" + font.Name
 				usedRunes := font.usedRunes
 				delete(usedRunes, 0)

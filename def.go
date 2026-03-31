@@ -854,6 +854,9 @@ type fontDefType struct {
 	// BMP runes are identity-mapped (CID == codepoint).
 	runeToCID    map[int]int
 	cidToRune    map[int]int
+	// bitmapGlyphs maps glyph IDs to color bitmap data (from CBDT/CBLC tables).
+	// When non-nil, characters mapping to these GIDs are rendered as inline images.
+	bitmapGlyphs map[int]*bitmapGlyph
 }
 
 // getCID returns the CID for a given rune. For BMP runes, the CID is the
@@ -886,6 +889,20 @@ func (fdt *fontDefType) textToCIDBytes(s string) string {
 		res = append(res, byte(cid>>8), byte(cid&0xFF))
 	}
 	return string(res)
+}
+
+// getBitmapGlyph returns the bitmap glyph for a rune, or nil if the rune
+// does not have a color bitmap. Uses the font's charSymbolDictionary to
+// resolve rune -> GID, then looks up the GID in bitmapGlyphs.
+func (fdt *fontDefType) getBitmapGlyph(r int) *bitmapGlyph {
+	if fdt.bitmapGlyphs == nil || fdt.utf8File == nil {
+		return nil
+	}
+	gid, ok := fdt.utf8File.charSymbolDictionary[r]
+	if !ok {
+		return nil
+	}
+	return fdt.bitmapGlyphs[gid]
 }
 
 // fontDefTypeJSON is an auxiliary type for JSON unmarshaling of fontDefType,
