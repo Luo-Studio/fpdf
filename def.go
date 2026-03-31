@@ -905,6 +905,61 @@ func (fdt *fontDefType) getBitmapGlyph(r int) *bitmapGlyph {
 	return fdt.bitmapGlyphs[gid]
 }
 
+// lookupLigatureBitmap tries to match a ligature sequence starting at runes[start].
+// If a matching ligature is found in GSUB and the result glyph has a bitmap,
+// it returns the bitmap glyph and the number of runes consumed.
+// This is used for ZWJ emoji sequences where multiple codepoints map to one glyph.
+func (fdt *fontDefType) lookupLigatureBitmap(runes []rune, start int) (*bitmapGlyph, int) {
+	if fdt.bitmapGlyphs == nil || fdt.utf8File == nil || fdt.utf8File.ligatures == nil {
+		return nil, 0
+	}
+
+	firstGID, ok := fdt.utf8File.charSymbolDictionary[int(runes[start])]
+	if !ok {
+		return nil, 0
+	}
+
+	ligs, ok := fdt.utf8File.ligatures[firstGID]
+	if !ok {
+		return nil, 0
+	}
+
+	// Try to match the longest ligature sequence first.
+	// Ligatures are stored in the order from the font, which typically has
+	// longer sequences first within each ligature set.
+	var bestBitmap *bitmapGlyph
+	bestLen := 0
+
+	remaining := runes[start+1:]
+	for _, lig := range ligs {
+		if len(lig.components) > len(remaining) {
+			continue
+		}
+
+		match := true
+		for ci, compGID := range lig.components {
+			runeGID, ok := fdt.utf8File.charSymbolDictionary[int(remaining[ci])]
+			if !ok || runeGID != compGID {
+				match = false
+				break
+			}
+		}
+
+		if match {
+			consumed := 1 + len(lig.components) // first glyph + components
+			if bg := fdt.bitmapGlyphs[lig.resultGID]; bg != nil && consumed > bestLen {
+				bestBitmap = bg
+				bestLen = consumed
+			}
+		}
+	}
+
+	if bestBitmap != nil {
+		return bestBitmap, bestLen
+	}
+	return nil, 0
+}
+
 // fontDefTypeJSON is an auxiliary type for JSON unmarshaling of fontDefType,
 // where Cw may be stored as a JSON array or object.
 type fontDefTypeJSON struct {

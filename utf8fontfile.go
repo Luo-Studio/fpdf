@@ -63,6 +63,9 @@ type utf8FontFile struct {
 	RuneToCID map[int]int
 	// CIDToRune is the reverse of RuneToCID, used to generate the ToUnicode CMap.
 	CIDToRune map[int]int
+	// ligatures maps first glyph ID to ligature substitutions from the GSUB table.
+	// Used for ZWJ emoji sequences where multiple codepoints combine into one glyph.
+	ligatures map[int][]ligature
 }
 
 type tableDescription struct {
@@ -510,6 +513,8 @@ func (utf *utf8FontFile) parseTables() {
 
 	scale := 1000.0 / float64(utf.fontElementSize)
 	utf.parseHMTXTable(n, numSymbols, symbolCharDictionary, scale)
+
+	utf.ligatures = utf.parseGSUBTable()
 }
 
 func (utf *utf8FontFile) generateCMAP() map[int][]int {

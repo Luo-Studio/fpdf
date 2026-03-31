@@ -1064,6 +1064,11 @@ func (f *Fpdf) GetStringSymbolWidth(s string) int {
 	w := 0
 	if f.isCurrentUTF8 {
 		for _, char := range s {
+			// Zero-width joiners and variation selectors are invisible
+			// modifiers used in emoji sequences — skip them.
+			if char == 0x200D || (char >= 0xFE00 && char <= 0xFE0F) {
+				continue
+			}
 			intChar := int(char)
 			if cw, ok := f.currentFont.Cw[intChar]; ok && cw > 0 {
 				if cw != 65535 {
@@ -2883,10 +2888,16 @@ func (f *Fpdf) Cell(w, h float64, txtStr string) {
 	f.CellFormat(w, h, txtStr, "", 0, "L", false, 0, "")
 }
 
-// hasBitmapGlyphs returns true if any rune in the string has a color bitmap glyph.
+// hasBitmapGlyphs returns true if any rune in the string has a color bitmap glyph,
+// either as a single character or as part of a ZWJ ligature sequence.
 func (f *Fpdf) hasBitmapGlyphs(s string) bool {
-	for _, r := range s {
-		if f.currentFont.getBitmapGlyph(int(r)) != nil {
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		if f.currentFont.getBitmapGlyph(int(runes[i])) != nil {
+			return true
+		}
+		if bg, consumed := f.currentFont.lookupLigatureBitmap(runes, i); bg != nil {
+			_ = consumed
 			return true
 		}
 	}
@@ -2895,7 +2906,9 @@ func (f *Fpdf) hasBitmapGlyphs(s string) bool {
 
 // cellWithBitmaps renders text that contains color bitmap emoji. It splits the
 // string into segments of regular text (rendered via CellFormat) and bitmap
-// characters (rendered as inline PNG images).
+// characters (rendered as inline PNG images). It supports ZWJ sequences by
+// looking up GSUB ligature substitutions to combine multiple codepoints into
+// a single bitmap glyph.
 func (f *Fpdf) cellWithBitmaps(w, h float64, txtStr string) {
 	if f.err != nil {
 		return
@@ -2905,8 +2918,23 @@ func (f *Fpdf) cellWithBitmaps(w, h float64, txtStr string) {
 	emojiSize := fontSize
 	isBitmapOnly := f.currentFont.utf8File != nil && f.currentFont.utf8File.IsBitmapOnly()
 
+	runes := []rune(txtStr)
 	var textBuf []rune
-	for _, r := range txtStr {
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+
+		// Try ZWJ ligature sequence first (e.g. 👨‍👩‍👧‍👦)
+		if bg, consumed := f.currentFont.lookupLigatureBitmap(runes, i); bg != nil {
+			// Flush accumulated text
+			if len(textBuf) > 0 {
+				f.CellFormat(f.GetStringWidth(string(textBuf)), h, string(textBuf), "", 0, "L", false, 0, "")
+				textBuf = textBuf[:0]
+			}
+			f.putBitmapEmoji(bg, emojiSize, h)
+			i += consumed - 1 // -1 because loop increments
+			continue
+		}
+
 		bg := f.currentFont.getBitmapGlyph(int(r))
 		if bg == nil {
 			if isBitmapOnly {
@@ -2916,6 +2944,11 @@ func (f *Fpdf) cellWithBitmaps(w, h float64, txtStr string) {
 				if len(textBuf) > 0 {
 					f.CellFormat(f.GetStringWidth(string(textBuf)), h, string(textBuf), "", 0, "L", false, 0, "")
 					textBuf = textBuf[:0]
+				}
+				// Zero-width joiners and variation selectors are invisible
+				// modifiers; they should not advance the cursor.
+				if r == 0x200D || (r >= 0xFE00 && r <= 0xFE0F) {
+					continue
 				}
 				charWidth := float64(f.currentFont.Cw[int(r)]) * f.fontSize / 1000
 				if charWidth == 0 {
