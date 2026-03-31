@@ -50,6 +50,16 @@ func round(f float64) int {
 	return int(math.Floor(f + 0.5))
 }
 
+func sliceToIntMap(s []int) map[int]int {
+	m := make(map[int]int, len(s))
+	for i, v := range s {
+		if v != 0 {
+			m[i] = v
+		}
+	}
+	return m
+}
+
 func sprintf(fmtStr string, args ...interface{}) string {
 	return fmt.Sprintf(fmtStr, args...)
 }
@@ -92,6 +102,20 @@ func utf8toutf16(s string, withBOM ...bool) string {
 		c1 := byte(s[i])
 		i++
 		switch {
+		case c1 >= 0xF0:
+			// 4-byte UTF-8 character (supplementary planes U+10000+)
+			c2 := byte(s[i])
+			i++
+			c3 := byte(s[i])
+			i++
+			c4 := byte(s[i])
+			i++
+			cp := (rune(c1&0x07) << 18) | (rune(c2&0x3F) << 12) | (rune(c3&0x3F) << 6) | rune(c4&0x3F)
+			// Encode as UTF-16 surrogate pair
+			cp -= 0x10000
+			hi := 0xD800 + (cp>>10)&0x3FF
+			lo := 0xDC00 + cp&0x3FF
+			res = append(res, byte(hi>>8), byte(hi&0xFF), byte(lo>>8), byte(lo&0xFF))
 		case c1 >= 224:
 			// 3-byte character
 			c2 := byte(s[i])

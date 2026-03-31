@@ -839,7 +839,7 @@ type fontDefType struct {
 	Desc         FontDescType  // Font descriptor
 	Up           int           // Underline position
 	Ut           int           // Underline thickness
-	Cw           []int         // Character width by ordinal
+	Cw           map[int]int   // Character width by ordinal
 	Enc          string        // "cp1252", ...
 	Diff         string        // Differences from reference encoding
 	File         string        // "Redressed.z"
@@ -850,6 +850,104 @@ type fontDefType struct {
 	i            string        // 1-based position in font list, set by font loader, not this program
 	utf8File     *utf8FontFile // UTF-8 font
 	usedRunes    map[int]int   // Array of used runes
+	// runeToCID maps supplementary plane runes (> U+FFFF) to 2-byte CID slots.
+	// BMP runes are identity-mapped (CID == codepoint).
+	runeToCID    map[int]int
+	cidToRune    map[int]int
+}
+
+// getCID returns the CID for a given rune. For BMP runes, the CID is the
+// codepoint itself. For supplementary plane runes (> U+FFFF), a remapped CID
+// in the BMP range is returned (allocating a new one if needed).
+func (fdt *fontDefType) getCID(r int) int {
+	if r <= 0xFFFF {
+		return r
+	}
+	if cid, ok := fdt.runeToCID[r]; ok {
+		return cid
+	}
+	// Allocate a new CID for this supplementary plane rune.
+	// Start scanning from Private Use Area, skip slots already in use.
+	cid := 0xE000
+	for fdt.cidToRune[cid] != 0 || fdt.usedRunes[cid] != 0 {
+		cid++
+	}
+	fdt.runeToCID[r] = cid
+	fdt.cidToRune[cid] = r
+	return cid
+}
+
+// textToCIDBytes converts a Go string to a CID byte string for the PDF content stream.
+// Each rune is mapped to a 2-byte big-endian CID value.
+func (fdt *fontDefType) textToCIDBytes(s string) string {
+	res := make([]byte, 0, len(s)*2)
+	for _, r := range s {
+		cid := fdt.getCID(int(r))
+		res = append(res, byte(cid>>8), byte(cid&0xFF))
+	}
+	return string(res)
+}
+
+// fontDefTypeJSON is an auxiliary type for JSON unmarshaling of fontDefType,
+// where Cw may be stored as a JSON array or object.
+type fontDefTypeJSON struct {
+	Tp           string          `json:"Tp"`
+	Name         string          `json:"Name"`
+	Desc         FontDescType    `json:"Desc"`
+	Up           int             `json:"Up"`
+	Ut           int             `json:"Ut"`
+	Cw           json.RawMessage `json:"Cw"`
+	Enc          string          `json:"Enc"`
+	Diff         string          `json:"Diff"`
+	File         string          `json:"File"`
+	Size1        int             `json:"Size1"`
+	Size2        int             `json:"Size2"`
+	OriginalSize int             `json:"OriginalSize"`
+	N            int             `json:"N"`
+	DiffN        int             `json:"DiffN"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler for fontDefType.
+// It handles both JSON array (legacy) and JSON object formats for Cw.
+func (fdt *fontDefType) UnmarshalJSON(data []byte) error {
+	var aux fontDefTypeJSON
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	fdt.Tp = aux.Tp
+	fdt.Name = aux.Name
+	fdt.Desc = aux.Desc
+	fdt.Up = aux.Up
+	fdt.Ut = aux.Ut
+	fdt.Enc = aux.Enc
+	fdt.Diff = aux.Diff
+	fdt.File = aux.File
+	fdt.Size1 = aux.Size1
+	fdt.Size2 = aux.Size2
+	fdt.OriginalSize = aux.OriginalSize
+	fdt.N = aux.N
+	fdt.DiffN = aux.DiffN
+	// Cw can be a JSON array (legacy) or JSON object (map)
+	if len(aux.Cw) > 0 && aux.Cw[0] == '[' {
+		var arr []int
+		if err := json.Unmarshal(aux.Cw, &arr); err != nil {
+			return err
+		}
+		fdt.Cw = make(map[int]int, len(arr))
+		for i, v := range arr {
+			if v != 0 {
+				fdt.Cw[i] = v
+			}
+		}
+	} else if len(aux.Cw) > 0 {
+		fdt.Cw = make(map[int]int)
+		if err := json.Unmarshal(aux.Cw, &fdt.Cw); err != nil {
+			return err
+		}
+	} else {
+		fdt.Cw = make(map[int]int)
+	}
+	return nil
 }
 
 // generateFontID generates a font Id from the font definition

@@ -30,11 +30,10 @@ func (f *Fpdf) SplitText(txt string, w float64) (lines []string) {
 	for i < nb {
 		c := s[i]
 
-		if int(c) >= len(cw) {
-			// Decimal representation of c is greater than the font width's array size so it can't be used as index.
-			l += cw[f.currentFont.Desc.MissingWidth]
+		if w, ok := cw[int(c)]; ok {
+			l += w
 		} else {
-			l += cw[c]
+			l += cw[f.currentFont.Desc.MissingWidth]
 		}
 
 		if unicode.IsSpace(c) || isChinese(c) {
