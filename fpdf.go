@@ -2935,7 +2935,7 @@ func (f *Fpdf) cellWithBitmaps(w, h float64, txtStr string) {
 		}
 
 		// Render bitmap glyph as inline PNG image
-		f.putBitmapEmoji(bg, emojiSize, h)
+		f.putBitmapEmoji(bg, emojiSize, h, r)
 	}
 
 	// Flush remaining text
@@ -2945,8 +2945,9 @@ func (f *Fpdf) cellWithBitmaps(w, h float64, txtStr string) {
 }
 
 // putBitmapEmoji renders a single color bitmap emoji at the current position
-// as an inline PNG image.
-func (f *Fpdf) putBitmapEmoji(bg *bitmapGlyph, emojiSize, cellHeight float64) {
+// as an inline PNG image. The codepoint is used to look up the font metric
+// advance width for proper spacing.
+func (f *Fpdf) putBitmapEmoji(bg *bitmapGlyph, emojiSize, cellHeight float64, codepoint ...rune) {
 	if f.err != nil {
 		return
 	}
@@ -2961,14 +2962,22 @@ func (f *Fpdf) putBitmapEmoji(bg *bitmapGlyph, emojiSize, cellHeight float64) {
 		}
 	}
 
-	// Position: current x, vertically centered in the cell
+	// Use the font metric advance width for both image size and x advance.
+	// This is larger than fontSize (which is in mm) and matches the glyph
+	// width reported by GetStringWidth, giving consistent spacing with text.
+	advance := emojiSize
+	if len(codepoint) > 0 {
+		if w := f.GetStringWidth(string(codepoint[0])); w > 0 {
+			advance = w
+		}
+	}
+
 	x := f.x
-	y := f.y + (cellHeight-emojiSize)/2
+	y := f.y + (cellHeight-advance)/2
 
-	f.ImageOptions(imgName, x, y, emojiSize, emojiSize, false, ImageOptions{ImageType: "png"}, 0, "")
+	f.ImageOptions(imgName, x, y, advance, advance, false, ImageOptions{ImageType: "png"}, 0, "")
 
-	// Advance x position
-	f.x += emojiSize
+	f.x += advance
 }
 
 // cellFormatWithBitmaps handles CellFormat calls when the text contains bitmap
