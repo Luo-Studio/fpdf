@@ -1065,9 +1065,9 @@ func (f *Fpdf) GetStringSymbolWidth(s string) int {
 	if f.isCurrentUTF8 {
 		for _, char := range s {
 			intChar := int(char)
-			if len(f.currentFont.Cw) >= intChar && f.currentFont.Cw[intChar] > 0 {
-				if f.currentFont.Cw[intChar] != 65535 {
-					w += f.currentFont.Cw[intChar]
+			if cw, ok := f.currentFont.Cw[intChar]; ok && cw > 0 {
+				if cw != 65535 {
+					w += cw
 				}
 			} else if f.currentFont.Desc.MissingWidth != 0 {
 				w += f.currentFont.Desc.MissingWidth
@@ -1080,7 +1080,7 @@ func (f *Fpdf) GetStringSymbolWidth(s string) int {
 			if ch == 0 {
 				break
 			}
-			w += f.currentFont.Cw[ch]
+			w += f.currentFont.Cw[int(ch)]
 		}
 	}
 	return w
@@ -2064,6 +2064,9 @@ func (f *Fpdf) addFont(familyStr, styleStr, fileStr string, isUTF8 bool) {
 			usedRunes: sbarr,
 			File:      fileStr,
 			utf8File:  utf8File,
+			runeToCID: make(map[int]int),
+			cidToRune: make(map[int]int),
+
 		}
 		def.i, _ = generateFontID(def)
 		f.fonts[fontKey] = def
@@ -2200,6 +2203,9 @@ func (f *Fpdf) addFontFromBytes(familyStr, styleStr string, jsonFileBytes, zFile
 			Cw:        utf8File.CharWidths,
 			utf8File:  utf8File,
 			usedRunes: sbarr,
+			runeToCID: make(map[int]int),
+			cidToRune: make(map[int]int),
+
 		}
 		def.i, _ = generateFontID(def)
 		f.fonts[fontkey] = def
@@ -2560,7 +2566,7 @@ func (f *Fpdf) Text(x, y float64, txtStr string) {
 			txtStr = reverseText(txtStr)
 			x -= f.GetStringWidth(txtStr)
 		}
-		txt2 = f.escape(utf8toutf16(txtStr, false))
+		txt2 = f.escape(f.currentFont.textToCIDBytes(txtStr))
 		for _, uni := range txtStr {
 			f.currentFont.usedRunes[int(uni)] = int(uni)
 		}
@@ -2783,7 +2789,7 @@ func (f *Fpdf) CellFormat(w, h float64, txtStr, borderStr string, ln int,
 			for _, uni := range txtStr {
 				f.currentFont.usedRunes[int(uni)] = int(uni)
 			}
-			space := f.escape(utf8toutf16(" ", false))
+			space := f.escape(f.currentFont.textToCIDBytes(" "))
 			strSize := f.GetStringSymbolWidth(txtStr)
 			s.printf("BT 0 Tw %.2f %.2f Td [", (f.x+dx)*k, (f.h-(f.y+.5*h+.3*f.fontSize))*k)
 			t := strings.Split(txtStr, " ")
@@ -2791,7 +2797,7 @@ func (f *Fpdf) CellFormat(w, h float64, txtStr, borderStr string, ln int,
 			numt := len(t)
 			for i := 0; i < numt; i++ {
 				tx := t[i]
-				tx = "(" + f.escape(utf8toutf16(tx, false)) + ")"
+				tx = "(" + f.escape(f.currentFont.textToCIDBytes(tx)) + ")"
 				s.printf("%s ", tx)
 				if (i + 1) < numt {
 					s.printf("%.3f(%s) ", -shift, space)
@@ -2804,7 +2810,7 @@ func (f *Fpdf) CellFormat(w, h float64, txtStr, borderStr string, ln int,
 				if f.isRTL {
 					txtStr = reverseText(txtStr)
 				}
-				txt2 = f.escape(utf8toutf16(txtStr, false))
+				txt2 = f.escape(f.currentFont.textToCIDBytes(txtStr))
 				for _, uni := range txtStr {
 					f.currentFont.usedRunes[int(uni)] = int(uni)
 				}
@@ -2900,7 +2906,7 @@ func (f *Fpdf) SplitLines(txt []byte, w float64) [][]byte {
 	l := 0
 	for i < nb {
 		c := s[i]
-		l += cw[c]
+		l += cw[int(c)]
 		if c == ' ' || c == '\t' || c == '\n' {
 			sep = i
 		}
@@ -3064,14 +3070,10 @@ func (f *Fpdf) MultiCell(w, h float64, txtStr, borderStr, alignStr string, fill 
 			ls = l
 			ns++
 		}
-		if int(c) >= len(cw) {
-			f.err = fmt.Errorf("character outside the supported range: %s", string(c))
-			return
-		}
-		if cw[int(c)] == 0 { //Marker width 0 used for missing symbols
+		if w, ok := cw[int(c)]; !ok || w == 0 { //Marker width 0 used for missing symbols
 			l += f.currentFont.Desc.MissingWidth
-		} else if cw[int(c)] != 65535 { //Marker width 65535 used for zero width symbols
-			l += cw[int(c)]
+		} else if w != 65535 { //Marker width 65535 used for zero width symbols
+			l += w
 		}
 		if l > wmax {
 			// Automatic line break
@@ -4525,13 +4527,34 @@ func (f *Fpdf) putfonts() {
 				if font.Desc.MissingWidth != 0 {
 					f.out("/DW " + strconv.Itoa(font.Desc.MissingWidth))
 				}
-				f.generateCIDFontMap(&font, font.utf8File.LastRune)
+				// Build a CID-based width map. For BMP chars CID == codepoint.
+				// For supplementary plane chars, use the remapped CID.
+				cidWidths := make(map[int]int)
+				maxCIDForW := 0
+				for cp, w := range font.Cw {
+					cid := cp
+					if cp > 0xFFFF {
+						if remapped, ok := font.runeToCID[cp]; ok {
+							cid = remapped
+						} else {
+							continue // supplementary char not used in document
+						}
+					}
+					cidWidths[cid] = w
+					if cid > maxCIDForW {
+						maxCIDForW = cid
+					}
+				}
+				cidFont := font
+				cidFont.Cw = cidWidths
+				f.generateCIDFontMap(&cidFont, maxCIDForW)
 				f.out("/CIDToGIDMap " + strconv.Itoa(f.n+4) + " 0 R>>")
 				f.out("endobj")
 
+				toUnicodeStr := f.generateToUnicodeCMap(&font)
 				f.newobj()
-				f.out("<</Length " + strconv.Itoa(len(toUnicode)) + ">>")
-				f.putstream([]byte(toUnicode))
+				f.out("<</Length " + strconv.Itoa(len(toUnicodeStr)) + ">>")
+				f.putstream([]byte(toUnicodeStr))
 				f.out("endobj")
 
 				// CIDInfo
@@ -4560,11 +4583,31 @@ func (f *Fpdf) putfonts() {
 				f.out("endobj")
 
 				// Embed CIDToGIDMap
-				cidToGidMap := make([]byte, 256*256*2)
+				// Map remapped CIDs to glyph IDs. For BMP chars, CID == codepoint.
+				// For supplementary plane chars, CID is the remapped value from runeToCID.
+				maxCID := 0
+				for cc := range CodeSignDictionary {
+					cid := cc
+					if cc > 0xFFFF {
+						if remapped, ok := font.runeToCID[cc]; ok {
+							cid = remapped
+						}
+					}
+					if cid > maxCID {
+						maxCID = cid
+					}
+				}
+				cidToGidMap := make([]byte, (maxCID+1)*2)
 
 				for cc, glyph := range CodeSignDictionary {
-					cidToGidMap[cc*2] = byte(glyph >> 8)
-					cidToGidMap[cc*2+1] = byte(glyph & 0xFF)
+					cid := cc
+					if cc > 0xFFFF {
+						if remapped, ok := font.runeToCID[cc]; ok {
+							cid = remapped
+						}
+					}
+					cidToGidMap[cid*2] = byte(glyph >> 8)
+					cidToGidMap[cid*2+1] = byte(glyph & 0xFF)
 				}
 
 				mem := xmem.compress(cidToGidMap)
@@ -4709,6 +4752,64 @@ func (f *Fpdf) generateCIDFontMap(font *fontDefType, LastRune int) {
 		}
 	}
 	f.out("/W [" + w.String() + " ]")
+}
+
+// generateToUnicodeCMap generates a ToUnicode CMap for a UTF-8 font.
+// For BMP characters (CID == codepoint), it uses a simple identity bfrange.
+// For supplementary plane characters that were remapped to BMP CID slots,
+// it adds explicit bfchar entries mapping CID -> actual Unicode codepoint.
+func (f *Fpdf) generateToUnicodeCMap(font *fontDefType) string {
+	var buf fmtBuffer
+	buf.WriteString("/CIDInit /ProcSet findresource begin\n")
+	buf.WriteString("12 dict begin\n")
+	buf.WriteString("begincmap\n")
+	buf.WriteString("/CIDSystemInfo\n")
+	buf.WriteString("<</Registry (Adobe)\n/Ordering (UCS)\n/Supplement 0\n>> def\n")
+	buf.WriteString("/CMapName /Adobe-Identity-UCS def\n")
+	buf.WriteString("/CMapType 2 def\n")
+
+	buf.WriteString("1 begincodespacerange\n")
+	buf.WriteString("<0000> <FFFF>\n")
+	buf.WriteString("endcodespacerange\n")
+
+	// Identity mapping for BMP range
+	buf.WriteString("1 beginbfrange\n")
+	buf.WriteString("<0000> <FFFF> <0000>\n")
+	buf.WriteString("endbfrange\n")
+
+	// Explicit mappings for remapped supplementary plane characters
+	if len(font.cidToRune) > 0 {
+		// Collect remapped CIDs that map to supplementary plane runes
+		type cidMapping struct {
+			cid  int
+			rune int
+		}
+		var mappings []cidMapping
+		for cid, r := range font.cidToRune {
+			if r > 0xFFFF {
+				mappings = append(mappings, cidMapping{cid, r})
+			}
+		}
+		if len(mappings) > 0 {
+			// Sort for deterministic output
+			sort.Slice(mappings, func(i, j int) bool { return mappings[i].cid < mappings[j].cid })
+			buf.printf("%d beginbfchar\n", len(mappings))
+			for _, m := range mappings {
+				// Encode the Unicode codepoint as a UTF-16BE surrogate pair
+				cp := m.rune - 0x10000
+				hi := 0xD800 + (cp>>10)&0x3FF
+				lo := 0xDC00 + cp&0x3FF
+				buf.printf("<%04X> <%04X%04X>\n", m.cid, hi, lo)
+			}
+			buf.WriteString("endbfchar\n")
+		}
+	}
+
+	buf.WriteString("endcmap\n")
+	buf.WriteString("CMapName currentdict /CMap defineresource pop\n")
+	buf.WriteString("end\n")
+	buf.WriteString("end")
+	return buf.String()
 }
 
 func implode(sep string, arr []int) string {

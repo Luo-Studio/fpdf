@@ -35,9 +35,6 @@ const symbolContinue = 1 << 5
 const symbolAllScale = 1 << 6
 const symbol2x2 = 1 << 7
 
-// CID map Init
-const toUnicode = "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo\n<</Registry (Adobe)\n/Ordering (UCS)\n/Supplement 0\n>> def\n/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n1 beginbfrange\n<0000> <FFFF> <0000>\nendbfrange\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend"
-
 type utf8FontFile struct {
 	fileReader           *fileReader
 	LastRune             int
@@ -55,10 +52,17 @@ type utf8FontFile struct {
 	Flags                int
 	UnderlinePosition    float64
 	UnderlineThickness   float64
-	CharWidths           []int
+	CharWidths           map[int]int
+	charWidthCount       int
 	DefaultWidth         float64
 	symbolData           map[int]map[string][]int
 	CodeSymbolDictionary map[int]int
+	// RuneToCID maps Unicode codepoints to CID values used in the PDF content stream.
+	// For BMP characters, CID == codepoint. For supplementary plane characters (> U+FFFF),
+	// they are remapped to unused CID slots so they fit in 2-byte Identity-H encoding.
+	RuneToCID map[int]int
+	// CIDToRune is the reverse of RuneToCID, used to generate the ToUnicode CMap.
+	CIDToRune map[int]int
 }
 
 type tableDescription struct {
@@ -503,6 +507,7 @@ func (utf *utf8FontFile) generateCMAP() map[int][]int {
 	utf.skip(2)
 	cmapTableCount := utf.readUint16()
 	runeCmapPosition := 0
+	format12Position := 0
 	for i := 0; i < cmapTableCount; i++ {
 		system := utf.readUint16()
 		coder := utf.readUint16()
@@ -512,24 +517,66 @@ func (utf *utf8FontFile) generateCMAP() map[int][]int {
 			format := utf.getUint16(cmapPosition + position)
 			if format == 4 {
 				runeCmapPosition = cmapPosition + position
-				break
+			}
+		}
+		// Check for format 12 (full 32-bit range) subtables
+		// platform 3 encoding 10 = Windows Unicode full repertoire
+		// platform 0 encoding >= 3 = Unicode full repertoire
+		if (system == 3 && coder == 10) || (system == 0 && coder >= 3) {
+			format := utf.getUint16(cmapPosition + position)
+			if format == 12 {
+				format12Position = cmapPosition + position
 			}
 		}
 		utf.seek(int(oldPosition))
 	}
 
-	if runeCmapPosition == 0 {
+	if runeCmapPosition == 0 && format12Position == 0 {
 		fmt.Printf("Font does not have cmap for Unicode\n")
 		return nil
 	}
 
 	symbolCharDictionary := make(map[int][]int)
 	charSymbolDictionary := make(map[int]int)
-	utf.generateSCCSDictionaries(runeCmapPosition, symbolCharDictionary, charSymbolDictionary)
+
+	// Parse format 4 (BMP) first
+	if runeCmapPosition != 0 {
+		utf.generateSCCSDictionaries(runeCmapPosition, symbolCharDictionary, charSymbolDictionary)
+	}
+
+	// Parse format 12 (full 32-bit range) to add supplementary plane mappings
+	if format12Position != 0 {
+		utf.generateFormat12Dictionaries(format12Position, symbolCharDictionary, charSymbolDictionary)
+	}
 
 	utf.charSymbolDictionary = charSymbolDictionary
 
 	return symbolCharDictionary
+}
+
+// generateFormat12Dictionaries parses a cmap format 12 subtable which supports
+// the full Unicode range (32-bit codepoints), including supplementary planes.
+func (utf *utf8FontFile) generateFormat12Dictionaries(cmapPosition int, symbolCharDictionary map[int][]int, charSymbolDictionary map[int]int) {
+	utf.seek(cmapPosition)
+	utf.skip(2)  // format (already known to be 12)
+	utf.skip(2)  // reserved
+	utf.skip(4)  // length
+	utf.skip(4)  // language
+	numGroups := utf.readUint32()
+
+	for i := 0; i < numGroups; i++ {
+		startCharCode := utf.readUint32()
+		endCharCode := utf.readUint32()
+		startGlyphID := utf.readUint32()
+		for char := startCharCode; char <= endCharCode; char++ {
+			symbol := startGlyphID + (char - startCharCode)
+			// Only add if not already mapped by format 4 (format 4 is authoritative for BMP)
+			if _, exists := charSymbolDictionary[char]; !exists {
+				charSymbolDictionary[char] = symbol
+				symbolCharDictionary[symbol] = append(symbolCharDictionary[symbol], char)
+			}
+		}
+	}
 }
 
 func (utf *utf8FontFile) parseSymbols(usedRunes map[int]int) (map[int]int, map[int]int, map[int]int, []int) {
@@ -836,7 +883,7 @@ func (utf *utf8FontFile) parseHMTXTable(numberOfHMetrics, numSymbols int, symbol
 	start := utf.SeekTable("hmtx")
 	arrayWidths := 0
 	var arr []int
-	utf.CharWidths = make([]int, 256*256)
+	utf.CharWidths = make(map[int]int)
 	charCount := 0
 	arr = unpackUint16Array(utf.getRange(start, numberOfHMetrics*4))
 	for symbol := 0; symbol < numberOfHMetrics; symbol++ {
@@ -856,10 +903,8 @@ func (utf *utf8FontFile) parseHMTXTable(numberOfHMetrics, numSymbols int, symbol
 					if widths == 0 {
 						widths = 65535
 					}
-					if char < 196608 {
-						utf.CharWidths[char] = widths
-						charCount++
-					}
+					utf.CharWidths[char] = widths
+					charCount++
 				}
 			}
 		}
@@ -874,15 +919,13 @@ func (utf *utf8FontFile) parseHMTXTable(numberOfHMetrics, numSymbols int, symbol
 					if widths == 0 {
 						widths = 65535
 					}
-					if char < 196608 {
-						utf.CharWidths[char] = widths
-						charCount++
-					}
+					utf.CharWidths[char] = widths
+					charCount++
 				}
 			}
 		}
 	}
-	utf.CharWidths[0] = charCount
+	utf.charWidthCount = charCount
 }
 
 func (utf *utf8FontFile) getMetrics(metricCount, gid int) []byte {
